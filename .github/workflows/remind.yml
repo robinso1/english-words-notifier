@@ -2,19 +2,24 @@ name: English word reminder
 
 on:
   schedule:
-    # Morning window 9-13 MSK = 6-10 UTC
-    - cron: "0 6-10 * * *"
+    # Morning window 9-13 MSK = 6-10 UTC, every 15min for redundancy
+    # (GitHub silently drops a chunk of scheduled triggers under load)
+    - cron: "*/15 6-10 * * *"
     # Evening window 17-22 MSK = 14-19 UTC
-    - cron: "0 14-19 * * *"
+    - cron: "*/15 14-19 * * *"
   workflow_dispatch:
     inputs:
       force:
-        description: "Force-send now (bypass window/probability check)"
+        description: "Force-send now (bypass window/already-sent check)"
         required: false
         default: "false"
 
 permissions:
   contents: write
+
+concurrency:
+  group: english-words-reminder
+  cancel-in-progress: false
 
 jobs:
   remind:
