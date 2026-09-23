@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
-"""Runs every 15min inside a morning/evening window (via GitHub Actions cron).
-GitHub silently drops a chunk of scheduled cron triggers under load, so a
-probability roll on top of that made delivery too unreliable -- fires as soon
-as the window opens and GH actually executes a run (that itself lands at an
-unpredictable minute, which is enough randomness for the spacing effect).
-State (whether today's window already fired) is committed back to the repo
-so it persists across ephemeral runner instances."""
+"""Runs every 15min during waking hours (via GitHub Actions cron).
+
+Design notes (v3):
+- GitHub silently delays/drops a chunk of scheduled cron triggers under load.
+  A run can land 30-90min late, so the two daily windows must NOT have a gap
+  between them -- otherwise a late run lands in the dead zone and gets
+  skipped, which is what silently broke morning delivery in v2.
+- For spacing-effect randomness without sacrificing reliability: the first
+  run that sees a given window "today" picks a random target minute inside
+  that window and stores it in state. Every later run in that window just
+  checks "have we passed the target yet" -- so delivery still lands at an
+  unpredictable moment, but any run after the target (not just the first)
+  can be the one that actually sends.
+State is committed back to the repo so it persists across ephemeral runners.
+"""
 import json
 import os
+import random
 import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
@@ -16,10 +25,11 @@ STATE_FILE = "state.json"
 APP_URL = "https://claude.ai/artifact/QPvmQ8UxcExJQBSN7q6yCb"
 MSK = timezone(timedelta(hours=3))
 
-# Windows in Moscow local time
+# Windows in Moscow local time -- back-to-back, no gap, so a delayed run
+# always lands in exactly one of them.
 WINDOWS = {
-    "morning": (9, 13),
-    "evening": (17, 22),
+    "morning": (7, 14),   # 07:00 - 14:00
+    "evening": (14, 23),  # 14:00 - 23:00
 }
 
 def load_state():
@@ -34,12 +44,21 @@ def save_state(state):
 
 def current_window(hour):
     for name, (start, end) in WINDOWS.items():
-        if start <= hour <= end:
-            return name
-    return None
+        if start <= hour < end:
+            return name, start, end
+    return None, None, None
 
-def should_fire(window_name, state, today_str):
-    return state.get(window_name) != today_str
+def minutes_since_midnight(dt):
+    return dt.hour * 60 + dt.minute
+
+def get_or_pick_target(state, window_name, start, end, today_str):
+    key = f"{window_name}_target"
+    entry = state.get(key)
+    if entry and entry.get("date") == today_str:
+        return entry["minute"]
+    target_minute = random.randint(start * 60, end * 60 - 1)
+    state[key] = {"date": today_str, "minute": target_minute}
+    return target_minute
 
 def send_ntfy(topic, title, body, click_url):
     r = subprocess.run(
@@ -58,13 +77,10 @@ def main():
 
     force = os.environ.get("FORCE_FIRE") == "1"
 
-    window_name = current_window(hour)
+    window_name, start, end = current_window(hour)
     if window_name is None and not force:
         print(f"Outside any window (MSK hour={hour}), skipping")
         return
-
-    if force:
-        window_name = window_name or "manual"
 
     topic = os.environ.get("NTFY_TOPIC")
     if not topic:
@@ -72,15 +88,28 @@ def main():
         sys.exit(1)
 
     state = load_state()
-    if not force and not should_fire(window_name, state, today_str):
+
+    if force:
+        send_ntfy(topic, "English · review time", "Tap to review your due words", APP_URL)
+        print("Reminder sent (forced)")
+        return
+
+    if state.get(window_name) == today_str:
         print(f"Already sent {window_name} today")
         return
 
-    send_ntfy(topic, "English · review time", "Tap to review your due words", APP_URL)
+    target_minute = get_or_pick_target(state, window_name, start, end, today_str)
+    now_minute = minutes_since_midnight(now)
 
+    if now_minute < target_minute:
+        save_state(state)  # persist the freshly-picked target
+        print(f"Target for {window_name} is {target_minute//60:02d}:{target_minute%60:02d} MSK, not there yet")
+        return
+
+    send_ntfy(topic, "English · review time", "Tap to review your due words", APP_URL)
     state[window_name] = today_str
     save_state(state)
-    print(f"Reminder sent for window={window_name}")
+    print(f"Reminder sent for window={window_name} (target was {target_minute//60:02d}:{target_minute%60:02d})")
 
 if __name__ == "__main__":
     main()

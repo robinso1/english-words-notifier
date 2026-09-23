@@ -2,11 +2,11 @@ name: English word reminder
 
 on:
   schedule:
-    # Morning window 9-13 MSK = 6-10 UTC, every 15min for redundancy
-    # (GitHub silently drops a chunk of scheduled triggers under load)
-    - cron: "*/15 6-10 * * *"
-    # Evening window 17-22 MSK = 14-19 UTC
-    - cron: "*/15 14-19 * * *"
+    # Waking hours 7-23 MSK = 4-20 UTC, every 15min, no gap between the
+    # morning/evening windows notify.py defines internally
+    # (GitHub silently drops/delays scheduled triggers under load, so more
+    # frequent + gapless is what makes delivery actually reliable)
+    - cron: "*/15 4-20 * * *"
   workflow_dispatch:
     inputs:
       force:
