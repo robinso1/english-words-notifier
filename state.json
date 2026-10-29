@@ -1,5 +1,5 @@
 {
-  "morning": "2026-10-28",
+  "morning": "2026-10-29",
   "manual": "2026-09-21",
   "evening": "2026-10-28",
   "evening_target": {
@@ -7,7 +7,7 @@
     "minute": 986
   },
   "morning_target": {
-    "date": "2026-10-28",
-    "minute": 588
+    "date": "2026-10-29",
+    "minute": 728
   }
 }
